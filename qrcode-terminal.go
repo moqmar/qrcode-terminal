@@ -15,7 +15,7 @@ func main() {
 	var args = os.Args[1:]
 
 	var level = qrcode.Medium
-	if len(args) > 1 {
+	if len(args) > 0 {
 		if args[0] == "--low" {
 			level = qrcode.Low
 			args = args[1:]
