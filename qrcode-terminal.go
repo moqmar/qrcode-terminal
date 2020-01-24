@@ -2,95 +2,52 @@ package main
 
 import (
 	"bytes"
-	"errors"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
-	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/skip2/go-qrcode"
+	"github.com/muesli/termenv"
 )
-
-const (
-	NormalBlack   = "\033[38;5;0m  \033[0m"
-	NormalRed     = "\033[38;5;1m  \033[0m"
-	NormalGreen   = "\033[38;5;2m  \033[0m"
-	NormalYellow  = "\033[38;5;3m  \033[0m"
-	NormalBlue    = "\033[38;5;4m  \033[0m"
-	NormalMagenta = "\033[38;5;5m  \033[0m"
-	NormalCyan    = "\033[38;5;6m  \033[0m"
-	NormalWhite   = "\033[38;5;7m  \033[0m"
-
-	BrightBlack   = "\033[48;5;0m  \033[0m"
-	BrightRed     = "\033[48;5;1m  \033[0m"
-	BrightGreen   = "\033[48;5;2m  \033[0m"
-	BrightYellow  = "\033[48;5;3m  \033[0m"
-	BrightBlue    = "\033[48;5;4m  \033[0m"
-	BrightMagenta = "\033[48;5;5m  \033[0m"
-	BrightCyan    = "\033[48;5;6m  \033[0m"
-	BrightWhite   = "\033[48;5;7m  \033[0m"
-)
-
-var (
-	frontColor      string
-	backgroundColor string
-	levelString     string
-	codeJustify     string
-)
-
-func init() {
-	flag.Usage = printHelp
-	flag.StringVar(&frontColor, "f", "black", "Front color")
-	flag.StringVar(&backgroundColor, "b", "white", "Background color")
-	flag.StringVar(&levelString, "l", "m", "Error correction level")
-	if runtime.GOOS != "windows" {
-		flag.StringVar(&codeJustify, "j", "left", "QR-Code justify")
-	}
-}
 
 func main() {
+	var args = os.Args[1:]
 
-	flag.Parse()
-
-	var front, back, content, justify string
-	var err error
-	var level qrcode.RecoveryLevel
-
-	if front, err = parseColor(frontColor); err != nil {
-		fmt.Println(err)
-		printHelp()
-		return
+	var level = qrcode.Medium
+	if len(args) > 1 {
+		if args[0] == "--low" {
+			level = qrcode.Low
+			args = args[1:]
+		} else if args[0] == "--medium" {
+			level = qrcode.Medium
+			args = args[1:]
+		} else if args[0] == "--high" {
+			level = qrcode.High
+			args = args[1:]
+		} else if args[0] == "--highest" {
+			level = qrcode.Highest
+			args = args[1:]
+		}
 	}
 
-	if back, err = parseColor(backgroundColor); err != nil {
-		fmt.Println(err)
-		printHelp()
-		return
+	if len(args) > 1 || args[0] == "--help" {
+		fmt.Printf("Generate & print unicode QR codes on the command line.\n")
+		fmt.Printf("Usage: %s [--low|--medium|--high|--highest] [text]\n", os.Args[0])
+		fmt.Printf("If no text is given, read from STDIN.\n")
+		os.Exit(1)
 	}
 
-	if level, err = parseLevel(levelString); err != nil {
-		fmt.Println(err)
-		printHelp()
-		return
-	}
-
-	if justify, err = parseJustify(codeJustify); err != nil {
-		fmt.Println(err)
-		printHelp()
-		return
-	}
-
-	if content = flag.Arg(0); content == "" {
+	var content = ""
+	if len(args) < 1 {
 		data, err := ioutil.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		content = strings.TrimSuffix(string(data), "\n")
+	} else {
+		content = args[0]
 	}
 
 	qr, err := qrcode.New(content, level)
@@ -99,136 +56,27 @@ func main() {
 		return
 	}
 
-	screenCols, _ := getTTYSize()
+	output := bytes.NewBuffer([]byte{})
 
 	bitmap := qr.Bitmap()
-	output := bytes.NewBuffer([]byte{})
-	for ir, row := range bitmap {
-		lr := len(row)
-
-		if ir == 0 || ir == 1 || ir == 2 ||
-			ir == lr-1 || ir == lr-2 || ir == lr-3 {
-			continue
-		}
-
-		if justify == "center" {
-			for spaces := 0; spaces < (screenCols/2 - lr/2 - 2*(3*2)); spaces++ {
-				output.WriteByte(' ')
+	quietZone := 2 // must be at least 1!
+	height := len(bitmap)
+	width := len(bitmap[0])
+	for y := quietZone; y < height - quietZone; y += 2 {
+		line := bytes.NewBuffer([]byte{})
+		for x := quietZone; x < width - quietZone; x++ {
+			if bitmap[y][x] && bitmap[y+1][x] {
+				line.WriteRune('█')
+			} else if bitmap[y][x] && !bitmap[y+1][x] {
+				line.WriteRune('▀')
+			} else if !bitmap[y][x] && bitmap[y+1][x] {
+				line.WriteRune('▄')
+			} else if !bitmap[y][x] && !bitmap[y+1][x] {
+				line.WriteRune(' ')
 			}
 		}
-
-		if justify == "right" {
-			for spaces := 0; spaces < (screenCols - 2*(lr-3*2)); spaces++ {
-				output.WriteByte(' ')
-			}
-		}
-
-		for ic, col := range row {
-			lc := len(bitmap)
-			if ic == 0 || ic == 1 || ic == 2 ||
-				ic == lc-1 || ic == lc-2 || ic == lc-3 {
-				continue
-			}
-			if col {
-				output.WriteString(front)
-			} else {
-				output.WriteString(back)
-			}
-		}
+		output.WriteString(termenv.String(line.String()).Reverse().String())
 		output.WriteByte('\n')
 	}
 	output.WriteTo(os.Stdout)
-}
-
-func parseColor(str string) (color string, err error) {
-	s := strings.ToUpper(str)
-	switch s {
-	case "BLACK":
-		color = BrightBlack
-	case "RED":
-		color = BrightRed
-	case "GREEN":
-		color = BrightGreen
-	case "YELLOW":
-		color = BrightYellow
-	case "BLUE":
-		color = BrightBlue
-	case "MAGENTA":
-		color = BrightMagenta
-	case "CYAN":
-		color = BrightCyan
-	case "WHITE":
-		color = BrightWhite
-	default:
-		err = errors.New(fmt.Sprintf("'%s' is not support.", str))
-	}
-
-	return
-}
-
-func parseLevel(str string) (level qrcode.RecoveryLevel, err error) {
-	s := strings.ToUpper(str)
-	switch s {
-	case "L":
-		level = qrcode.Low
-	case "M":
-		level = qrcode.Medium
-	case "Q":
-		level = qrcode.High
-	case "H":
-		level = qrcode.Highest
-	default:
-		err = errors.New(fmt.Sprintf("'%s' is not support.", str))
-	}
-
-	return
-}
-
-func parseJustify(str string) (justify string, err error) {
-	s := strings.ToUpper(str)
-	switch s {
-	case "LEFT":
-		justify = "left"
-	case "RIGHT":
-		justify = "right"
-	case "CENTER":
-		justify = "center"
-	default:
-		err = errors.New(fmt.Sprintf("'%s' is not support.", str))
-	}
-	return
-}
-
-func printHelp() {
-
-	helpStr := `QRCode generater terminal edition.
-
-Supported background colors: [black, red, green, yellow, blue, magenta, cyan, white]
-Supported front colors: [black, red, green, yellow, blue, magenta, cyan, white]
-Supported error correction levels: [L, M, Q, H]
-`
-	if runtime.GOOS != "windows" {
-		helpStr = helpStr + "\nSupported qr-code justifies: [left, center, right]"
-	}
-	fmt.Println(helpStr)
-	flag.PrintDefaults()
-}
-
-func getTTYSize() (int, int) {
-	cmd := exec.Command("stty", "size")
-	cmd.Stdin = os.Stdin
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, 0
-	}
-	outStr := strings.Replace(string(out), "\n", "", -1)
-	cols, err := strconv.Atoi(strings.Split(outStr, " ")[1])
-	if err != nil {
-		return 0, 0
-	}
-	rows, err := strconv.Atoi(strings.Split(outStr, " ")[0])
-	if err != nil {
-		return 0, 0
-	}
-	return cols, rows
 }
