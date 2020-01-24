@@ -31,7 +31,7 @@ func main() {
 		}
 	}
 
-	if len(args) > 1 || args[0] == "--help" {
+	if len(args) > 1 || (len(args) == 1 && args[0] == "--help") {
 		fmt.Printf("Generate & print unicode QR codes on the command line.\n")
 		fmt.Printf("Usage: %s [--low|--medium|--high|--highest] [text]\n", os.Args[0])
 		fmt.Printf("If no text is given, read from STDIN.\n")
@@ -59,12 +59,13 @@ func main() {
 	output := bytes.NewBuffer([]byte{})
 
 	bitmap := qr.Bitmap()
-	quietZone := 2 // must be at least 1!
 	height := len(bitmap)
 	width := len(bitmap[0])
-	for y := quietZone; y < height - quietZone; y += 2 {
-		line := bytes.NewBuffer([]byte{})
-		for x := quietZone; x < width - quietZone; x++ {
+
+	var line *bytes.Buffer
+	for y := 1; y < height - 2; y += 2 {
+		line = bytes.NewBuffer([]byte{})
+		for x := 1; x < width - 1; x++ {
 			if bitmap[y][x] && bitmap[y+1][x] {
 				line.WriteRune('█')
 			} else if bitmap[y][x] && !bitmap[y+1][x] {
@@ -78,5 +79,7 @@ func main() {
 		output.WriteString(termenv.String(line.String()).Reverse().String())
 		output.WriteByte('\n')
 	}
+	output.WriteString(strings.Repeat("▀", width - 2))
+	output.WriteByte('\n')
 	output.WriteTo(os.Stdout)
 }
